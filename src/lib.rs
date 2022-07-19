@@ -1,6 +1,6 @@
 mod vec2;
 mod vec3;
-pub mod screen;
+mod screen;
 
 pub use minifb::{Window, Key, WindowOptions, Scale, KeyRepeat, MouseMode};
 pub use screen::*;
@@ -11,13 +11,15 @@ pub fn run(screen: &Screen, window: &mut Window, buffer: &mut [u32]) {
 
     let mut camera_pos = Vec3 { x: 0.0, y: 0.0, z: 0.0 };
     let sphere_pos = Vec3 { x: 5.0, y: 0.0, z: 0.0 };
-    let plane_normal = Vec3 { x: 0.0, y: 0.0, z: 1.0 };
+    let plane_normal = Vec3 { x: 0.0, y: 0.0, z: 1.0 }.norm();
 
     let mut camera_move = Vec3::default();
     let mut ray_direction: Vec3;
     let mut light: Vec3;
     let mut uv: Vec2;
     let mut mouse_xy = Vec2::default();
+    let mut normal = Vec3::default();
+    let mut shape_color;
 
     let sensitivity = 0.025;
     let speed = 0.05;
@@ -25,7 +27,6 @@ pub fn run(screen: &Screen, window: &mut Window, buffer: &mut [u32]) {
     let sphere_r = 1.0;
     let mut color;
     let mut intersection; 
-    let mut normal = Vec3::default();
     let mut nearest_point;
 
 
@@ -39,6 +40,17 @@ pub fn run(screen: &Screen, window: &mut Window, buffer: &mut [u32]) {
                 uv = w_h.div(screen.get_size()).mul_num(2.0).add_num(-1.0);
                 uv.y = uv.y * -screen.aspect;
 
+                // Getting the mouse position
+                /*
+                match window.get_mouse_pos(MouseMode::Clamp) {
+                    // TODO: Rewrite this thing
+                    Some(mouse) => mouse_xy = Vec2 { x: mouse.0 as i32 as f32, y: mouse.1 as i32 as f32 } 
+                    .div(screen.get_size()).mul_num(2.0).add_num(-1.0),
+                    None => (),
+                }
+                mouse_xy.y = mouse_xy.y * -screen.aspect;
+                */
+
                 ray_direction = Vec3 { x: 1.0, y: uv.x, z: uv.y }.norm();
                 ray_direction = Vec3 {
                     x: ray_direction.x * f32::cos(mouse_xy.y) - ray_direction.z * f32::sin(mouse_xy.y),
@@ -51,31 +63,30 @@ pub fn run(screen: &Screen, window: &mut Window, buffer: &mut [u32]) {
                     z: ray_direction.z, 
                 };
                 
-
-
                 // All intersections
+                shape_color = Vec3::default();
                 nearest_point = -1.0; // WTF
                 intersection = sphere_collision(camera_pos.sub(sphere_pos), ray_direction, sphere_r);
                 if intersection.x >= 0.0 {
                     normal = camera_pos.sub(sphere_pos).add(ray_direction.mul_num(intersection.x)).norm();
                     nearest_point = intersection.x;
+                    shape_color = Vec3 {x: 0.5, y: 0.1, z: 1.0};
                 } 
 
                 intersection = plane_collision(camera_pos, ray_direction, plane_normal, -1.0);
                 if intersection.x >= 0.0 && (nearest_point > intersection.x || nearest_point == -1.0) {
-                    normal = plane_normal.norm();
+                    normal = plane_normal;
                     nearest_point = intersection.x;
+                    shape_color = Vec3 {x: 0.5, y: 0.5, z: 0.5};
                 }
 
                 // Setting lights and colors
                 light = Vec3 { x: f32::cos(time), y: f32::sin(time), z: f32::cos(time)}.norm();
 
-                color = 0;
+                color = 0x9999FF;
                 if nearest_point > 0.0 {
-                    let mut clr = -normal.dot(light);
-                    clr = clr * 255.0;
-                    clr = clamp(clr, 10.0, 255.0);
-                    color = color_from_u8(clr as u8);
+                    let pixel_alpha = clamp(-normal.dot(light), 0.2, 1.0) * 255.0;
+                    color = new_color_a(shape_color, pixel_alpha);
                 }
 
                 buffer[h*screen.width + w] = color; 
@@ -113,8 +124,8 @@ pub fn run(screen: &Screen, window: &mut Window, buffer: &mut [u32]) {
 
 
 
-fn from_u8_rgb(r: u8, g: u8, b: u8) -> u32 {
-    let (r, g, b) = (r as u32, g as u32, b as u32);
+fn new_color_a (color: Vec3, alpha: f32) -> u32 {
+    let (r, g, b) = ((color.x * alpha) as u32, (color.y * alpha) as u32, (color.z * alpha) as u32);
     (r << 16) | (g << 8) | b
 }
 
