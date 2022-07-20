@@ -1,93 +1,83 @@
 mod vec2;
 mod vec3;
 mod screen;
+mod shapes;
+mod camera;
 
 pub use minifb::{Window, Key, WindowOptions, Scale, KeyRepeat, MouseMode};
+
 pub use screen::*;
 use vec2::*;
 use vec3::*;
+use shapes::*;
+use camera::*;
 
 pub fn run(screen: &Screen, window: &mut Window, buffer: &mut [u32]) {
 
-    let mut camera_pos = Vec3 { x: 0.0, y: 0.0, z: 0.0 };
-    let sphere_pos = Vec3 { x: 5.0, y: 0.0, z: 0.0 };
-    let plane_normal = Vec3 { x: 0.0, y: 0.0, z: 1.0 }.norm();
+    const SENSITIVITY: f32 = 0.025;
+    const SPEED: f32 = 0.05;
+
+    let mut camera = Camera::create( Vec3 { x: 0.0, y: 0.0, z: 0.0 } );
+    let sphere = Sphere {
+        position: Vec3 { x: 5.0, y: 0.0, z: 0.0 },
+        radius: 1.0,
+        color: Vec3 { x: 0.0, y: 1.0, z: 0.0 }
+    };
+    let plane = Plane {
+        normal: Vec3 { x: 0.0, y: 0.0, z: 1.0 }.norm(),
+        z: -1.0,
+        color: Vec3 { x: 0.5, y: 0.5, z: 0.5 },
+    };
 
     let mut camera_move = Vec3::default();
-    let mut ray_direction: Vec3;
     let mut light: Vec3;
     let mut uv: Vec2;
     let mut mouse_xy = Vec2::default();
     let mut normal = Vec3::default();
-    let mut shape_color;
 
-    let sensitivity = 0.025;
-    let speed = 0.05;
+    let mut cur_speed = SPEED;
     let mut time = 0.0;
-    let sphere_r = 1.0;
-    let mut color;
-    let mut intersection; 
-    let mut nearest_point;
 
 
     //TODO: write more functions from this while
     while window.is_open() && !window.is_key_down(Key::Escape) {
         for w in 0..screen.width {
             for h in 0..screen.height {
-                
-                // Creating uv
-                let w_h = Vec2{x: w as f32, y: h as f32};
-                uv = w_h.div(screen.get_size()).mul_num(2.0).add_num(-1.0);
-                uv.y = uv.y * -screen.aspect;
 
-                // Getting the mouse position
-                /*
-                match window.get_mouse_pos(MouseMode::Clamp) {
-                    // TODO: Rewrite this thing
-                    Some(mouse) => mouse_xy = Vec2 { x: mouse.0 as i32 as f32, y: mouse.1 as i32 as f32 } 
-                    .div(screen.get_size()).mul_num(2.0).add_num(-1.0),
-                    None => (),
-                }
-                mouse_xy.y = mouse_xy.y * -screen.aspect;
-                */
+                uv = get_uv(w as f32, h as f32, &screen);
+                camera.cast_ray(uv, mouse_xy);
 
-                ray_direction = Vec3 { x: 1.0, y: uv.x, z: uv.y }.norm();
-                ray_direction = Vec3 {
-                    x: ray_direction.x * f32::cos(mouse_xy.y) - ray_direction.z * f32::sin(mouse_xy.y),
-                    z: ray_direction.x * f32::sin(mouse_xy.y) + ray_direction.z * f32::cos(mouse_xy.y),
-                    y: ray_direction.y, 
-                };
-                ray_direction = Vec3 {
-                    x: ray_direction.x * f32::cos(mouse_xy.x) - ray_direction.y * f32::sin(mouse_xy.x),
-                    y: ray_direction.x * f32::sin(mouse_xy.x) + ray_direction.y * f32::cos(mouse_xy.x),
-                    z: ray_direction.z, 
-                };
-                
-                // All intersections
-                shape_color = Vec3::default();
-                nearest_point = -1.0; // WTF
-                intersection = sphere_collision(camera_pos.sub(sphere_pos), ray_direction, sphere_r);
-                if intersection.x >= 0.0 {
-                    normal = camera_pos.sub(sphere_pos).add(ray_direction.mul_num(intersection.x)).norm();
-                    nearest_point = intersection.x;
-                    shape_color = Vec3 {x: 0.5, y: 0.1, z: 1.0};
-                } 
+                let intersections = get_all_intersections(camera, sphere, plane);
+                let (nearest_point, index_of_shape) = get_nearest_point(&intersections);
 
-                intersection = plane_collision(camera_pos, ray_direction, plane_normal, -1.0);
-                if intersection.x >= 0.0 && (nearest_point > intersection.x || nearest_point == -1.0) {
-                    normal = plane_normal;
-                    nearest_point = intersection.x;
-                    shape_color = Vec3 {x: 0.5, y: 0.5, z: 0.5};
+                let shape_color;
+                match index_of_shape {
+                    0 => {
+                        normal = camera.position.sub(sphere.position).add(camera.ray_direction.mul_num(nearest_point)).norm();
+                        shape_color = sphere.color;
+                    },
+                    1 => {
+                        normal = camera.position.sub(sphere.position).add(camera.ray_direction.mul_num(nearest_point)).norm();
+                        shape_color = sphere.color;
+                    },
+                    2 => {
+                        normal = plane.normal;
+                        shape_color = plane.color;
+                    },
+                    _ => shape_color = Vec3::default(),
                 }
 
                 // Setting lights and colors
-                light = Vec3 { x: f32::cos(time), y: f32::sin(time), z: f32::cos(time)}.norm();
+                light = Vec3 { x: f32::cos(time), y: f32::sin(time), z: f32::cos(time)-1.0}.norm();
 
-                color = 0x9999FF;
+                let mut color = 0x9999FF;
+                if camera.ray_direction.dot(light) < -0.99 {
+                    color = 0xFFFFAA;
+                }
                 if nearest_point > 0.0 {
                     let pixel_alpha = clamp(-normal.dot(light), 0.2, 1.0) * 255.0;
                     color = new_color_a(shape_color, pixel_alpha);
-                }
+                } 
 
                 buffer[h*screen.width + w] = color; 
             }
@@ -96,58 +86,65 @@ pub fn run(screen: &Screen, window: &mut Window, buffer: &mut [u32]) {
         window.update_with_buffer(&buffer, screen.width, screen.height).unwrap();
         time = time + 0.01;
 
+        if window.is_key_down(Key::LeftShift) {
+            cur_speed = SPEED * 2.0;
+        }
+
         for key in window.get_keys() {
             match key {
-                Key::W => camera_move = Vec3 { x: speed, ..camera_move},
-                Key::S => camera_move = Vec3 { x: -speed, ..camera_move},
-                Key::D => camera_move = Vec3 { y: speed, ..camera_move},
-                Key::A => camera_move = Vec3 { y: -speed, ..camera_move},
-                Key::Space => camera_pos.z = camera_pos.z + speed,
-                Key::LeftCtrl => camera_pos.z = camera_pos.z - speed,
-                Key::Right => mouse_xy.x = mouse_xy.x + sensitivity,
-                Key::Left => mouse_xy.x = mouse_xy.x - sensitivity,
-                Key::Up => mouse_xy.y = mouse_xy.y + sensitivity,
-                Key::Down => mouse_xy.y = mouse_xy.y - sensitivity,
+                Key::W => camera_move = Vec3 { x: cur_speed, ..camera_move},
+                Key::S => camera_move = Vec3 { x: -cur_speed, ..camera_move},
+                Key::D => camera_move = Vec3 { y: cur_speed, ..camera_move},
+                Key::A => camera_move = Vec3 { y: -cur_speed, ..camera_move},
+                Key::Space => camera.position.z = camera.position.z + cur_speed,
+                Key::LeftCtrl => camera.position.z = camera.position.z - cur_speed,
+                Key::Right => mouse_xy.x = mouse_xy.x + SENSITIVITY,
+                Key::Left => mouse_xy.x = mouse_xy.x - SENSITIVITY,
+                Key::Up => mouse_xy.y = mouse_xy.y + SENSITIVITY,
+                Key::Down => mouse_xy.y = mouse_xy.y - SENSITIVITY,
                 _ => (),
             }
         }
 
-        camera_move = Vec3 {
-            x: camera_move.x * f32::cos(mouse_xy.x) - camera_move.y * f32::sin(mouse_xy.x),
-            y: camera_move.x * f32::sin(mouse_xy.x) + camera_move.y * f32::cos(mouse_xy.x),
-            z: camera_move.z,
-        };
-        camera_pos = camera_pos.add(camera_move);
+        camera.movement(camera_move, mouse_xy);
+        
         camera_move = Vec3::default();
+        cur_speed = SPEED;
     }
 }
 
-
+fn get_uv(cur_width: f32, cur_heught: f32, screen: &Screen) -> Vec2 {
+        let w_h = Vec2{x: cur_width as f32, y: cur_heught as f32};
+        let mut uv = w_h.div(screen.get_size()).mul_num(2.0).add_num(-1.0);
+        uv.y = uv.y * -screen.aspect;
+        uv
+    }
 
 fn new_color_a (color: Vec3, alpha: f32) -> u32 {
     let (r, g, b) = ((color.x * alpha) as u32, (color.y * alpha) as u32, (color.z * alpha) as u32);
     (r << 16) | (g << 8) | b
 }
 
-fn color_from_u8(num: u8) -> u32 {
-    let num = num as u32;
-    (num << 16) | (num << 8) | num
-}
-
 fn clamp(value: f32, minn: f32, maxx: f32) -> f32{
     f32::min(f32::max(value, minn), maxx)
 }
 
-fn sphere_collision(camera_pos: Vec3, ray_direction: Vec3, r: f32) -> Vec2 {
-    let b = camera_pos.dot(ray_direction);
-    let c = camera_pos.dot(camera_pos) - r*r;
-    let h = b*b - c;
-    if h < 0.0 { return Vec2::from_number(-1.0); }
-    let h = f32::sqrt(h);
-    Vec2 { x: -b - h, y: -b + h }
-}
+fn get_all_intersections(camera: Camera, sphere: Sphere, plane: Plane) -> [f32; 3] {
+    let mut intersections = [0_f32; 3];
+    (intersections[0], intersections[1]) = sphere.collision(camera);
+    intersections[2] = plane.collision(camera);
 
-fn plane_collision(camera_pos: Vec3, ray_direction: Vec3, plane_normal: Vec3, plane_z: f32) -> Vec2{
-    let intersec = -(camera_pos.dot(plane_normal) - plane_z) / ray_direction.dot(plane_normal);
-    Vec2::from_number(intersec)
+    intersections
+} 
+
+fn get_nearest_point (points: &[f32; 3]) -> (f32, usize) {
+    let mut index = 0;
+    let mut point = -1.0;
+    for (i, &p) in points.iter().enumerate() {
+        if p > 0.0 && (p < point || point == -1.0) {
+            point = p;
+            index = i;
+        }
+    }
+    (point, index)
 }
